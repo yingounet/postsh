@@ -13,6 +13,8 @@ class StorageService {
   static const _connListKey = 'connection_list';
   static const _connPwdPrefix = 'conn_pwd_';
   static const _connPpkPrefix = 'conn_ppk_';
+  static const _cmdHistoryPrefix = 'cmd_history_';
+  static const _cmdHistoryLimit = 200;
 
   /// 跨平台安全存储：Android 为 EncryptedSharedPreferences，iOS/macOS 为系统密钥链，Windows 等由插件选择后端。
   static const _secureStorage = FlutterSecureStorage();
@@ -186,5 +188,44 @@ class StorageService {
       }
       await prefs.setString(key, jsonEncode(list));
     } catch (_) {}
+  }
+
+  /// 命令历史：按 host/port/user 维度存储（无密码）。
+  static String historyKeyFromConfig(ConnectionConfig config) {
+    return '${config.host}:${config.port}:${config.username}';
+  }
+
+  /// 读取命令历史（最新在前）。
+  static Future<List<String>> getCommandHistory(String historyKey) async {
+    final raw = await getConfig('$_cmdHistoryPrefix$historyKey');
+    if (raw == null || raw.isEmpty) return [];
+    try {
+      final list = (jsonDecode(raw) as List<dynamic>)
+          .map((e) => e.toString())
+          .where((e) => e.trim().isNotEmpty)
+          .toList();
+      return list;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 追加命令历史：去重、置顶并截断到上限。
+  static Future<void> addCommandHistory(
+    String historyKey,
+    String command,
+  ) async {
+    final cleaned = command.trim();
+    if (cleaned.isEmpty) return;
+    final list = await getCommandHistory(historyKey);
+    list.removeWhere((e) => e == cleaned);
+    list.insert(0, cleaned);
+    if (list.length > _cmdHistoryLimit) {
+      list.removeRange(_cmdHistoryLimit, list.length);
+    }
+    await setConfig(
+      '$_cmdHistoryPrefix$historyKey',
+      jsonEncode(list),
+    );
   }
 }

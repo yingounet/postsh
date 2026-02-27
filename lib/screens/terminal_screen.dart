@@ -3,9 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../data/static_commands.dart';
 import '../models/session_state.dart';
 import '../providers/connections_provider.dart';
 import '../providers/session_provider.dart';
+import '../services/completion_service.dart';
 import '../services/storage_service.dart';
 
 /// 终端 Tab 容器：多连接以 Tab 形式保留，切换 Tab 即切回该连接的会话内容。
@@ -27,7 +29,13 @@ class TerminalScreen extends ConsumerStatefulWidget {
 class _TerminalScreenState extends ConsumerState<TerminalScreen> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  final _inputFocusNode = FocusNode();
   final Set<String> _lastUsedUpdated = {};
+  final List<String> _history = [];
+  List<String> _suggestions = [];
+  int _selectedIndex = 0;
+  String? _historyKey;
+  bool _loadingHistory = false;
 
   @override
   void initState() {
@@ -46,7 +54,75 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
   void dispose() {
     _inputController.dispose();
     _scrollController.dispose();
+    _inputFocusNode.dispose();
     super.dispose();
+  }
+
+  Future<void> _maybeLoadHistory(ConnectionConfig config) async {
+    final key = StorageService.historyKeyFromConfig(config);
+    if (_historyKey == key || _loadingHistory) return;
+    _loadingHistory = true;
+    try {
+      final history = await StorageService.getCommandHistory(key);
+      if (!mounted) return;
+      setState(() {
+        _historyKey = key;
+        _history
+          ..clear()
+          ..addAll(history);
+        _suggestions = [];
+        _selectedIndex = 0;
+      });
+    } finally {
+      _loadingHistory = false;
+    }
+  }
+
+  void _updateSuggestions(String value) {
+    final suggestions = CompletionService.buildSuggestions(
+      input: value,
+      history: _history,
+      staticCommands: staticUnixCommands,
+    );
+    setState(() {
+      _suggestions = suggestions;
+      _selectedIndex = 0;
+    });
+  }
+
+  void _applySelectedSuggestion() {
+    if (_suggestions.isEmpty) return;
+    final suggestion = _suggestions[_selectedIndex];
+    final nextText =
+        CompletionService.applySuggestion(_inputController.text, suggestion);
+    _inputController.text = nextText;
+    _inputController.selection = TextSelection.collapsed(
+      offset: _inputController.text.length,
+    );
+    _updateSuggestions(_inputController.text);
+  }
+
+  void _handleKey(RawKeyEvent event) {
+    if (event is! RawKeyDownEvent) return;
+    if (_suggestions.isEmpty) return;
+    if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      setState(() {
+        _selectedIndex = (_selectedIndex + 1) % _suggestions.length;
+      });
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      setState(() {
+        _selectedIndex =
+            (_selectedIndex - 1 + _suggestions.length) % _suggestions.length;
+      });
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowRight ||
+        event.logicalKey == LogicalKeyboardKey.tab) {
+      _applySelectedSuggestion();
+    } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+      setState(() {
+        _suggestions = [];
+        _selectedIndex = 0;
+      });
+    }
   }
 
   void _submitCommand() {
@@ -55,7 +131,16 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     final currentId = ref.read(sessionsProvider).currentSessionId;
     if (currentId == null) return;
     ref.read(sessionsProvider.notifier).addCommand(currentId, text);
+    if (_historyKey != null) {
+      StorageService.addCommandHistory(_historyKey!, text);
+      _history.removeWhere((e) => e == text);
+      _history.insert(0, text);
+    }
     _inputController.clear();
+    setState(() {
+      _suggestions = [];
+      _selectedIndex = 0;
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -74,6 +159,9 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     final sessionState = ref.watch(currentSessionStateProvider);
     final terminal = ref.watch(currentTerminalProvider);
     final config = ref.watch(currentSessionConfigProvider);
+    if (config != null) {
+      _maybeLoadHistory(config);
+    }
 
     ref.listen<SessionsState>(sessionsProvider, (prev, next) {
       final entry = next.currentEntry;
@@ -103,6 +191,19 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
               errorMessage: sessionState.error,
             ),
           const SizedBox(width: 8),
+          if (sessionState != null &&
+              (sessionState.status == ConnectionStatus.disconnected ||
+                  sessionState.status == ConnectionStatus.error))
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                final id = ref.read(sessionsProvider).currentSessionId;
+                if (id != null) {
+                  ref.read(sessionsProvider.notifier).reconnect(id);
+                }
+              },
+              tooltip: '重连',
+            ),
           IconButton(
             icon: const Icon(Icons.clear_all),
             onPressed: () {
@@ -162,8 +263,24 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
           if (config != null && !config.usePty)
             _CommandInput(
               controller: _inputController,
+              focusNode: _inputFocusNode,
               enabled: sessionState?.status == ConnectionStatus.connected,
               onSubmit: _submitCommand,
+              onChanged: _updateSuggestions,
+              onKey: _handleKey,
+              suggestions: _suggestions,
+              selectedIndex: _selectedIndex,
+              onSuggestionTap: (value) {
+                _inputController.text = CompletionService.applySuggestion(
+                  _inputController.text,
+                  value,
+                );
+                _inputController.selection = TextSelection.collapsed(
+                  offset: _inputController.text.length,
+                );
+                _updateSuggestions(_inputController.text);
+                _inputFocusNode.requestFocus();
+              },
             ),
         ],
       ),
@@ -372,13 +489,25 @@ class _OutputArea extends StatelessWidget {
 class _CommandInput extends StatelessWidget {
   const _CommandInput({
     required this.controller,
+    required this.focusNode,
     required this.enabled,
     required this.onSubmit,
+    required this.onChanged,
+    required this.onKey,
+    required this.suggestions,
+    required this.selectedIndex,
+    required this.onSuggestionTap,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final bool enabled;
   final void Function()? onSubmit;
+  final void Function(String value) onChanged;
+  final void Function(RawKeyEvent event) onKey;
+  final List<String> suggestions;
+  final int selectedIndex;
+  final void Function(String value) onSuggestionTap;
 
   @override
   Widget build(BuildContext context) {
@@ -388,33 +517,89 @@ class _CommandInput extends StatelessWidget {
         color: Theme.of(context).colorScheme.surface,
         border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            '\$ ',
-            style: TextStyle(
-              fontFamily: 'monospace',
-              color: enabled ? Colors.green : Colors.grey,
-              fontSize: 16,
-            ),
-          ),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              enabled: enabled,
-              decoration: const InputDecoration(
-                hintText: '输入命令，Enter 提交',
-                border: InputBorder.none,
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(vertical: 8),
+          if (suggestions.isNotEmpty)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 160),
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: suggestions.length,
+                  itemBuilder: (context, i) {
+                    final item = suggestions[i];
+                    final selected = i == selectedIndex;
+                    return InkWell(
+                      onTap: () => onSuggestionTap(item),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        color: selected
+                            ? Theme.of(context)
+                                .colorScheme
+                                .primaryContainer
+                            : Colors.transparent,
+                        child: Text(
+                          item,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 13,
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
               ),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
-              onSubmitted: enabled && onSubmit != null ? (_) => onSubmit!() : null,
             ),
-          ),
-          FilledButton(
-            onPressed: enabled && onSubmit != null ? onSubmit : null,
-            child: const Text('执行'),
+          Row(
+            children: [
+              Text(
+                '\$ ',
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  color: enabled ? Colors.green : Colors.grey,
+                  fontSize: 16,
+                ),
+              ),
+              Expanded(
+                child: RawKeyboardListener(
+                  focusNode: focusNode,
+                  onKey: onKey,
+                  child: TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    enabled: enabled,
+                    decoration: const InputDecoration(
+                      hintText: '输入命令，Enter 提交',
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(vertical: 8),
+                    ),
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                    ),
+                    onChanged: onChanged,
+                    onSubmitted: enabled && onSubmit != null
+                        ? (_) => onSubmit!()
+                        : null,
+                  ),
+                ),
+              ),
+              FilledButton(
+                onPressed: enabled && onSubmit != null ? onSubmit : null,
+                child: const Text('执行'),
+              ),
+            ],
           ),
         ],
       ),

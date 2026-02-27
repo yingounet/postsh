@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -177,6 +178,10 @@ class SessionEntry {
     this.stderrSub,
     this.running = false,
     this.usePty = false,
+    this.shouldReconnect = true,
+    this.hasConnected = false,
+    this.reconnectAttempts = 0,
+    this.reconnectTimer,
   });
 
   final ConnectionConfig config;
@@ -189,6 +194,10 @@ class SessionEntry {
   StreamSubscription? stderrSub;
   bool running;
   bool usePty;
+  bool shouldReconnect;
+  bool hasConnected;
+  int reconnectAttempts;
+  Timer? reconnectTimer;
 }
 
 /// 多会话状态：当前选中的 Tab id + 所有会话。
@@ -236,6 +245,10 @@ class SessionsNotifier extends Notifier<SessionsState> {
     state = state.copyWith(currentSessionId: sessionKey);
 
     if (existing != null) {
+      existing.shouldReconnect = true;
+      existing.reconnectAttempts = 0;
+      existing.reconnectTimer?.cancel();
+      existing.reconnectTimer = null;
       await _connectForKey(sessionKey, config, existing, sessions);
       return;
     }
@@ -281,8 +294,15 @@ class SessionsNotifier extends Notifier<SessionsState> {
     ConnectionConfig config,
     SessionEntry entry,
     Map<String, SessionEntry> sessions,
+    {bool isReconnect = false}
   ) async {
-    entry.state = SessionState(status: ConnectionStatus.connecting);
+    await _cleanupConnection(entry);
+    entry.state = entry.state.copyWith(
+      status: isReconnect
+          ? ConnectionStatus.reconnecting
+          : ConnectionStatus.connecting,
+      error: null,
+    );
     state = state.copyWith(sessions: Map.from(sessions));
 
     try {
@@ -311,6 +331,11 @@ class SessionsNotifier extends Notifier<SessionsState> {
             : null,
       );
       await entry.client!.authenticated;
+      entry.client!.done.then((_) {
+        _handleRemoteDisconnect(sessionKey, null);
+      }).catchError((error) {
+        _handleRemoteDisconnect(sessionKey, error.toString());
+      });
 
       entry.usePty = config.usePty;
       if (entry.usePty) {
@@ -374,19 +399,104 @@ class SessionsNotifier extends Notifier<SessionsState> {
       }
 
       entry.running = true;
-      entry.state = SessionState(status: ConnectionStatus.connected);
+      entry.shouldReconnect = true;
+      entry.hasConnected = true;
+      entry.reconnectAttempts = 0;
+      entry.state = entry.state.copyWith(
+        status: ConnectionStatus.connected,
+        error: null,
+      );
       sessions[sessionKey] = entry;
       state = state.copyWith(sessions: Map.from(sessions));
       _processQueue(sessionKey);
     } catch (e) {
       entry.running = false;
-      entry.state = SessionState(
+      entry.state = entry.state.copyWith(
         status: ConnectionStatus.error,
         error: e.toString(),
       );
       sessions[sessionKey] = entry;
       state = state.copyWith(sessions: Map.from(sessions));
+      if (entry.shouldReconnect && entry.hasConnected) {
+        _scheduleReconnect(sessionKey, entry, sessions);
+      }
     }
+  }
+
+  Future<void> _cleanupConnection(SessionEntry entry) async {
+    entry.running = false;
+    await entry.outputSub?.cancel();
+    await entry.stderrSub?.cancel();
+    entry.outputSub = null;
+    entry.stderrSub = null;
+    if (entry.terminal != null) {
+      entry.terminal!.onOutput = null;
+      entry.terminal!.onResize = null;
+    }
+    try {
+      entry.shellSession?.close();
+    } catch (_) {}
+    entry.shellSession = null;
+    try {
+      entry.client?.close();
+    } catch (_) {}
+    entry.client = null;
+    try {
+      await entry.socket?.close();
+    } catch (_) {}
+    entry.socket = null;
+  }
+
+  void _handleRemoteDisconnect(String sessionKey, String? error) {
+    final sessions = Map<String, SessionEntry>.from(state.sessions);
+    final entry = sessions[sessionKey];
+    if (entry == null) return;
+    if (!entry.shouldReconnect) {
+      entry.state = entry.state.copyWith(
+        status: ConnectionStatus.disconnected,
+        error: error,
+      );
+      sessions[sessionKey] = entry;
+      state = state.copyWith(sessions: sessions);
+      return;
+    }
+    final updatedCommands = entry.state.commands.map((c) {
+      if (c.status == CommandStatus.sending) {
+        return c.copyWith(status: CommandStatus.pending);
+      }
+      return c;
+    }).toList();
+    entry.state = entry.state.copyWith(
+      status: ConnectionStatus.reconnecting,
+      commands: updatedCommands,
+      error: error,
+    );
+    sessions[sessionKey] = entry;
+    state = state.copyWith(sessions: sessions);
+    _scheduleReconnect(sessionKey, entry, sessions);
+  }
+
+  void _scheduleReconnect(
+    String sessionKey,
+    SessionEntry entry,
+    Map<String, SessionEntry> sessions,
+  ) {
+    entry.reconnectTimer?.cancel();
+    entry.reconnectAttempts += 1;
+    final delaySeconds = math.min(30, 1 << (entry.reconnectAttempts - 1));
+    entry.reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      final latest = state.sessions[sessionKey];
+      if (latest == null || !latest.shouldReconnect) return;
+      _connectForKey(
+        sessionKey,
+        latest.config,
+        latest,
+        Map<String, SessionEntry>.from(state.sessions),
+        isReconnect: true,
+      );
+    });
+    sessions[sessionKey] = entry;
+    state = state.copyWith(sessions: Map.from(sessions));
   }
 
   void _appendPtyOutput(String sessionKey, String s) {
@@ -517,23 +627,35 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final entry = sessions[sessionKey];
     if (entry == null) return;
 
-    entry.running = false;
-    await entry.outputSub?.cancel();
-    await entry.stderrSub?.cancel();
-    if (entry.terminal != null) {
-      entry.terminal!.onOutput = null;
-      entry.terminal!.onResize = null;
-    }
-    entry.shellSession?.close();
-    entry.shellSession = null;
-    entry.client?.close();
-    entry.client = null;
-    entry.socket = null;
-    entry.outputSub = null;
-    entry.stderrSub = null;
-    entry.state = SessionState(status: ConnectionStatus.disconnected);
+    entry.shouldReconnect = false;
+    entry.reconnectTimer?.cancel();
+    entry.reconnectTimer = null;
+    await _cleanupConnection(entry);
+    entry.state = entry.state.copyWith(
+      status: ConnectionStatus.disconnected,
+      error: null,
+    );
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
+  }
+
+  Future<void> reconnect(String sessionKey) async {
+    final sessions = Map<String, SessionEntry>.from(state.sessions);
+    final entry = sessions[sessionKey];
+    if (entry == null) return;
+    entry.shouldReconnect = true;
+    entry.reconnectAttempts = 0;
+    entry.reconnectTimer?.cancel();
+    entry.reconnectTimer = null;
+    sessions[sessionKey] = entry;
+    state = state.copyWith(sessions: sessions);
+    await _connectForKey(
+      sessionKey,
+      entry.config,
+      entry,
+      sessions,
+      isReconnect: true,
+    );
   }
 
   void clearOutput(String sessionKey) {
