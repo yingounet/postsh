@@ -1,0 +1,5 @@
+package net.yingou.postsh
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
