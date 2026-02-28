@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../models/connection_config.dart';
 import '../providers/app_provider.dart';
 import '../providers/connections_provider.dart';
 import '../providers/session_provider.dart';
@@ -36,9 +37,7 @@ class HomeScreen extends ConsumerWidget {
             icon: const Icon(Icons.settings),
             onPressed: () {
               Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => const SettingsScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
             },
             tooltip: '设置',
@@ -76,9 +75,7 @@ class HomeScreen extends ConsumerWidget {
                 final config = list[i];
                 final id = config.id!;
                 return ListTile(
-                  leading: const CircleAvatar(
-                    child: Icon(Icons.terminal),
-                  ),
+                  leading: const CircleAvatar(child: Icon(Icons.terminal)),
                   title: Text(config.displayTitle),
                   subtitle: Text(
                     '${config.host}:${config.port} · ${_formatLastUsed(config.lastUsedAt)}',
@@ -141,21 +138,27 @@ class HomeScreen extends ConsumerWidget {
   void _navigateToManage(BuildContext context, WidgetRef ref, String? id) {
     Navigator.of(context)
         .push<bool>(
-      MaterialPageRoute(
-        builder: (context) => ConnectionManageScreen(connectionId: id),
-      ),
-    )
+          MaterialPageRoute(
+            builder: (context) => ConnectionManageScreen(connectionId: id),
+          ),
+        )
         .then((_) {
-      ref.invalidate(connectionsListProvider);
-    });
+          ref.invalidate(connectionsListProvider);
+        });
   }
 
-  Future<void> _connectTo(BuildContext context, WidgetRef ref, String id) async {
+  Future<void> _connectTo(
+    BuildContext context,
+    WidgetRef ref,
+    String id,
+  ) async {
     final config = await StorageService.getConnectionConfig(id);
     if (config == null || !context.mounted) return;
     var useConfig = config;
     final hasPassword = config.password != null && config.password!.isNotEmpty;
-    final hasKey = config.privateKeyPath != null && config.privateKeyPath!.trim().isNotEmpty;
+    final hasKey =
+        config.privateKeyPath != null &&
+        config.privateKeyPath!.trim().isNotEmpty;
     if (!hasPassword && !hasKey) {
       // 仅保存了密码但未写入安全存储（如 macOS 无 Keychain）时，弹窗让用户输入密码用于本次连接
       final password = await showDialog<String>(
@@ -189,9 +192,9 @@ class HomeScreen extends ConsumerWidget {
       if (password == null || !context.mounted) return;
       if (password.isEmpty) {
         if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('请输入密码')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('请输入密码')));
         }
         return;
       }
@@ -318,16 +321,13 @@ class _EmptyState extends StatelessWidget {
               color: Theme.of(context).colorScheme.outline,
             ),
             const SizedBox(height: 16),
-            Text(
-              '还没有保存的服务器',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            Text('还没有保存的服务器', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
               '添加连接后可按最近使用排序快速连接',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -351,8 +351,11 @@ class _QuickConnectSheet extends ConsumerStatefulWidget {
   });
 
   final WidgetRef ref;
+
   /// 表单连接（不保存）：config；若从最近使用点击则带 connectionId 以更新最后使用时间。
-  final void Function(ConnectionConfig config, {String? connectionId}) onConnect;
+  final void Function(ConnectionConfig config, {String? connectionId})
+  onConnect;
+
   /// 点击最近使用某条时：传入连接 id，由外部加载配置并跳转。
   final void Function(String connectionId) onRecentTap;
 
@@ -388,15 +391,15 @@ class _QuickConnectSheetState extends ConsumerState<_QuickConnectSheet> {
     final privateKeyPassphrase = _privateKeyPassphraseController.text.trim();
 
     if (username.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入用户名')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请输入用户名')));
       return;
     }
     if (privateKeyPath.isEmpty && password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请填写密码或私钥路径')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请填写密码或私钥路径')));
       return;
     }
 
@@ -406,10 +409,10 @@ class _QuickConnectSheetState extends ConsumerState<_QuickConnectSheet> {
       port: port,
       username: username,
       password: password.isNotEmpty ? password : null,
-      privateKeyPath:
-          privateKeyPath.isNotEmpty ? privateKeyPath : null,
-      privateKeyPassphrase:
-          privateKeyPassphrase.isNotEmpty ? privateKeyPassphrase : null,
+      privateKeyPath: privateKeyPath.isNotEmpty ? privateKeyPath : null,
+      privateKeyPassphrase: privateKeyPassphrase.isNotEmpty
+          ? privateKeyPassphrase
+          : null,
       usePty: usePty,
     );
     widget.onConnect(config);
@@ -439,9 +442,9 @@ class _QuickConnectSheetState extends ConsumerState<_QuickConnectSheet> {
                 Text(
                   '最近使用',
                   style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 ...recent5.map((config) {
@@ -524,10 +527,7 @@ class _QuickConnectSheetState extends ConsumerState<_QuickConnectSheet> {
                 ),
               ),
               const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _connect,
-                child: const Text('连接'),
-              ),
+              FilledButton(onPressed: _connect, child: const Text('连接')),
             ],
           ),
         );

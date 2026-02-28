@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../providers/session_provider.dart';
+import '../models/connection_config.dart';
 
 /// 本地存储服务：配置、历史、密钥等。
 class StorageService {
@@ -106,9 +106,7 @@ class StorageService {
       lastUsedAt: config.lastUsedAt ?? DateTime.now(),
     );
     final map = updated.toJson();
-    final idx = list.indexWhere(
-      (e) => (e as Map<String, dynamic>)['id'] == id,
-    );
+    final idx = list.indexWhere((e) => (e as Map<String, dynamic>)['id'] == id);
     if (idx >= 0) {
       list[idx] = map;
     } else {
@@ -164,10 +162,7 @@ class StorageService {
     }
     final password = await getSecret('$_connPwdPrefix$id');
     final ppk = await getSecret('$_connPpkPrefix$id');
-    return config.copyWith(
-      password: password,
-      privateKeyPassphrase: ppk,
-    );
+    return config.copyWith(password: password, privateKeyPassphrase: ppk);
   }
 
   /// 更新指定连接的最后使用时间
@@ -223,9 +218,6 @@ class StorageService {
     if (list.length > _cmdHistoryLimit) {
       list.removeRange(_cmdHistoryLimit, list.length);
     }
-    await setConfig(
-      '$_cmdHistoryPrefix$historyKey',
-      jsonEncode(list),
-    );
+    await setConfig('$_cmdHistoryPrefix$historyKey', jsonEncode(list));
   }
 }

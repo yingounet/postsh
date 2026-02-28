@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../data/static_commands.dart';
-import '../models/session_state.dart';
 import '../providers/connections_provider.dart';
 import '../providers/session_provider.dart';
 import '../services/completion_service.dart';
@@ -19,6 +18,7 @@ class TerminalScreen extends ConsumerStatefulWidget {
   });
 
   final ConnectionConfig initialConfig;
+
   /// 若来自已保存连接，传入 id 以更新最后使用时间并作为 sessionKey。
   final String? initialConnectionId;
 
@@ -40,13 +40,13 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
   @override
   void initState() {
     super.initState();
-    final key = widget.initialConnectionId ??
+    final key =
+        widget.initialConnectionId ??
         sessionKeyFromConfig(widget.initialConfig);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(sessionsProvider.notifier).addOrSwitchToTab(
-        key,
-        widget.initialConfig,
-      );
+      ref
+          .read(sessionsProvider.notifier)
+          .addOrSwitchToTab(key, widget.initialConfig);
     });
   }
 
@@ -93,8 +93,10 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
   void _applySelectedSuggestion() {
     if (_suggestions.isEmpty) return;
     final suggestion = _suggestions[_selectedIndex];
-    final nextText =
-        CompletionService.applySuggestion(_inputController.text, suggestion);
+    final nextText = CompletionService.applySuggestion(
+      _inputController.text,
+      suggestion,
+    );
     _inputController.text = nextText;
     _inputController.selection = TextSelection.collapsed(
       offset: _inputController.text.length,
@@ -233,32 +235,31 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
             child: currentId == null
                 ? const Center(child: Text('无当前会话'))
                 : sessionState == null
-                    ? const Center(child: CircularProgressIndicator())
-                    : sessionState.status == ConnectionStatus.connecting
-                        ? const Center(child: CircularProgressIndicator())
-                        : sessionState.status == ConnectionStatus.error
-                            ? Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      '连接失败: ${sessionState.error}',
-                                      style: const TextStyle(color: Colors.red),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    FilledButton(
-                                      onPressed: () =>
-                                          Navigator.of(context).pop(),
-                                      child: const Text('返回'),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : _buildBody(
-                                config: config!,
-                                sessionState: sessionState,
-                                terminal: terminal,
-                              ),
+                ? const Center(child: CircularProgressIndicator())
+                : sessionState.status == ConnectionStatus.connecting
+                ? const Center(child: CircularProgressIndicator())
+                : sessionState.status == ConnectionStatus.error
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          '连接失败: ${sessionState.error}',
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          child: const Text('返回'),
+                        ),
+                      ],
+                    ),
+                  )
+                : _buildBody(
+                    config: config!,
+                    sessionState: sessionState,
+                    terminal: terminal,
+                  ),
           ),
           if (config != null && !config.usePty)
             _CommandInput(
@@ -355,8 +356,9 @@ class _TabBar extends ConsumerWidget {
                           title,
                           style: TextStyle(
                             fontSize: 13,
-                            fontWeight:
-                                selected ? FontWeight.w600 : FontWeight.normal,
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
                           ),
                           overflow: TextOverflow.ellipsis,
                           maxLines: 1,
@@ -388,10 +390,7 @@ class _TabBar extends ConsumerWidget {
 }
 
 class _StatusChip extends StatelessWidget {
-  const _StatusChip({
-    required this.status,
-    this.errorMessage,
-  });
+  const _StatusChip({required this.status, this.errorMessage});
 
   final ConnectionStatus status;
   final String? errorMessage;
@@ -402,16 +401,14 @@ class _StatusChip extends StatelessWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('错误原因'),
-        content: SingleChildScrollView(
-          child: SelectableText(message),
-        ),
+        content: SingleChildScrollView(child: SelectableText(message)),
         actions: [
           TextButton(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: message));
-              ScaffoldMessenger.of(ctx).showSnackBar(
-                const SnackBar(content: Text('已复制到剪贴板')),
-              );
+              ScaffoldMessenger.of(
+                ctx,
+              ).showSnackBar(const SnackBar(content: Text('已复制到剪贴板')));
             },
             child: const Text('复制'),
           ),
@@ -437,7 +434,8 @@ class _StatusChip extends StatelessWidget {
       label: Text(label),
       backgroundColor: color.withValues(alpha: 0.2),
     );
-    final isErrorWithMessage = status == ConnectionStatus.error &&
+    final isErrorWithMessage =
+        status == ConnectionStatus.error &&
         errorMessage != null &&
         errorMessage!.isNotEmpty;
     if (isErrorWithMessage) {
@@ -451,10 +449,7 @@ class _StatusChip extends StatelessWidget {
 }
 
 class _OutputArea extends StatelessWidget {
-  const _OutputArea({
-    required this.output,
-    required this.scrollController,
-  });
+  const _OutputArea({required this.output, required this.scrollController});
 
   final List<String> output;
   final ScrollController scrollController;
@@ -543,9 +538,7 @@ class _CommandInput extends StatelessWidget {
                           vertical: 8,
                         ),
                         color: selected
-                            ? Theme.of(context)
-                                .colorScheme
-                                .primaryContainer
+                            ? Theme.of(context).colorScheme.primaryContainer
                             : Colors.transparent,
                         child: Text(
                           item,

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../models/session_state.dart';
 import '../providers/connections_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/settings_provider.dart';
@@ -9,10 +8,7 @@ import '../services/storage_service.dart';
 
 /// 连接管理页：新增或编辑已保存连接。
 class ConnectionManageScreen extends ConsumerStatefulWidget {
-  const ConnectionManageScreen({
-    super.key,
-    this.connectionId,
-  });
+  const ConnectionManageScreen({super.key, this.connectionId});
 
   /// 为 null 表示新增，否则为编辑指定 id 的连接。
   final String? connectionId;
@@ -22,7 +18,8 @@ class ConnectionManageScreen extends ConsumerStatefulWidget {
       _ConnectionManageScreenState();
 }
 
-class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen> {
+class _ConnectionManageScreenState
+    extends ConsumerState<ConnectionManageScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _hostController = TextEditingController(text: 'localhost');
@@ -60,8 +57,7 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
       _userController.text = config.username;
       _passwordController.text = '';
       _privateKeyPathController.text = config.privateKeyPath ?? '';
-      _privateKeyPassphraseController.text =
-          config.privateKeyPassphrase ?? '';
+      _privateKeyPassphraseController.text = config.privateKeyPassphrase ?? '';
       _loadedPassword = pwd;
       _loading = false;
     });
@@ -80,13 +76,15 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
   }
 
   ConnectionConfig _configFromForm({String? password, String? ppk}) {
-    final pwd = password ?? (_passwordController.text.trim().isNotEmpty
-        ? _passwordController.text.trim()
-        : _loadedPassword);
+    final pwd =
+        password ??
+        (_passwordController.text.trim().isNotEmpty
+            ? _passwordController.text.trim()
+            : _loadedPassword);
     final pkPath = _privateKeyPathController.text.trim();
-    final pkPhrase = ppk ?? (pkPath.isEmpty
-        ? null
-        : _privateKeyPassphraseController.text.trim());
+    final pkPhrase =
+        ppk ??
+        (pkPath.isEmpty ? null : _privateKeyPassphraseController.text.trim());
     return ConnectionConfig(
       id: widget.connectionId,
       name: _nameController.text.trim().isEmpty
@@ -134,8 +132,8 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
         password: password.isNotEmpty ? password : null,
         privateKeyPassphrase:
             _privateKeyPassphraseController.text.trim().isNotEmpty
-                ? _privateKeyPassphraseController.text.trim()
-                : null,
+            ? _privateKeyPassphraseController.text.trim()
+            : null,
       );
       if (!mounted) return;
       ref.invalidate(connectionsListProvider);
@@ -160,7 +158,10 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
       _showSnackBar('请填写密码或私钥路径');
       return;
     }
-    if (_isEdit && pkPath.isEmpty && password.isEmpty && _loadedPassword == null) {
+    if (_isEdit &&
+        pkPath.isEmpty &&
+        password.isEmpty &&
+        _loadedPassword == null) {
       _showSnackBar('请填写密码或私钥路径');
       return;
     }
@@ -174,10 +175,9 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
       );
       final usePty = ref.read(settingsProvider).valueOrNull?.usePty ?? false;
       const testKey = '_test';
-      await ref.read(sessionsProvider.notifier).addOrSwitchToTab(
-        testKey,
-        config.copyWith(usePty: usePty),
-      );
+      await ref
+          .read(sessionsProvider.notifier)
+          .addOrSwitchToTab(testKey, config.copyWith(usePty: usePty));
       final entry = ref.read(sessionsProvider).sessions[testKey];
       if (entry?.state.status == ConnectionStatus.error) {
         await ref.read(sessionsProvider.notifier).disconnect(testKey);
@@ -274,8 +274,7 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
                 labelText: '主机',
                 border: OutlineInputBorder(),
               ),
-              validator: (v) =>
-                  v == null || v.trim().isEmpty ? '请输入主机' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? '请输入主机' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -293,8 +292,7 @@ class _ConnectionManageScreenState extends ConsumerState<ConnectionManageScreen>
                 labelText: '用户名',
                 border: OutlineInputBorder(),
               ),
-              validator: (v) =>
-                  v == null || v.trim().isEmpty ? '请输入用户名' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? '请输入用户名' : null,
             ),
             const SizedBox(height: 12),
             TextFormField(

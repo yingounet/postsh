@@ -8,105 +8,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
 import '../models/command_item.dart';
+import '../models/connection_config.dart';
+import '../models/session_entry.dart';
 import '../models/session_state.dart';
 
-/// 连接配置
-class ConnectionConfig {
-  const ConnectionConfig({
-    required this.host,
-    required this.port,
-    required this.username,
-    this.password,
-    this.privateKeyPath,
-    this.privateKeyPassphrase,
-    this.usePty = false,
-    this.id,
-    this.name,
-    this.lastUsedAt,
-  });
+export '../models/connection_config.dart';
+export '../models/session_state.dart';
 
-  final String host;
-  final int port;
-  final String username;
-  final String? password;
-  final String? privateKeyPath;
-  final String? privateKeyPassphrase;
-  /// 为 true 时使用 PTY shell 通道（支持 tmux/screen），否则使用 exec 单次执行。
-  final bool usePty;
-  /// 保存连接的唯一 id，用于存储与最近使用排序。
-  final String? id;
-  /// 连接名/别名，用于列表展示。
-  final String? name;
-  /// 最后连接时间。
-  final DateTime? lastUsedAt;
-
-  /// 列表展示用标题：优先别名，否则 username@host。
-  String get displayTitle => (name != null && name!.trim().isNotEmpty)
-      ? name!.trim()
-      : '$username@$host';
-
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'name': name,
-      'host': host,
-      'port': port,
-      'username': username,
-      'privateKeyPath': privateKeyPath,
-      'privateKeyPassphrase': privateKeyPassphrase,
-      'usePty': usePty,
-      'lastUsedAt': lastUsedAt?.toIso8601String(),
-    };
-  }
-
-  static ConnectionConfig fromJson(
-    Map<String, dynamic> json, {
-    String? password,
-    String? privateKeyPassphrase,
-  }) {
-    final lastUsedAt = json['lastUsedAt'] as String?;
-    return ConnectionConfig(
-      id: json['id'] as String?,
-      name: json['name'] as String?,
-      host: json['host'] as String? ?? '',
-      port: (json['port'] as num?)?.toInt() ?? 22,
-      username: json['username'] as String? ?? '',
-      password: password,
-      privateKeyPath: json['privateKeyPath'] as String?,
-      privateKeyPassphrase: privateKeyPassphrase ?? json['privateKeyPassphrase'] as String?,
-      usePty: json['usePty'] as bool? ?? false,
-      lastUsedAt: lastUsedAt != null ? DateTime.tryParse(lastUsedAt) : null,
-    );
-  }
-
-  ConnectionConfig copyWith({
-    String? host,
-    int? port,
-    String? username,
-    String? password,
-    String? privateKeyPath,
-    String? privateKeyPassphrase,
-    bool? usePty,
-    String? id,
-    String? name,
-    DateTime? lastUsedAt,
-  }) {
-    return ConnectionConfig(
-      host: host ?? this.host,
-      port: port ?? this.port,
-      username: username ?? this.username,
-      password: password ?? this.password,
-      privateKeyPath: privateKeyPath ?? this.privateKeyPath,
-      privateKeyPassphrase: privateKeyPassphrase ?? this.privateKeyPassphrase,
-      usePty: usePty ?? this.usePty,
-      id: id ?? this.id,
-      name: name ?? this.name,
-      lastUsedAt: lastUsedAt ?? this.lastUsedAt,
-    );
-  }
-}
-
-/// 从 config 生成会话 key：有 id 用 id，否则用 quick- host:port:user。
+/// 从 config 生成会话 key：有 id 用 id，否则用 quick-host:port:user
 String sessionKeyFromConfig(ConnectionConfig config) {
   if (config.id != null && config.id!.trim().isNotEmpty) {
     return config.id!.trim();
@@ -114,7 +23,7 @@ String sessionKeyFromConfig(ConnectionConfig config) {
   return 'quick-${config.host}:${config.port}:${config.username}';
 }
 
-/// 去掉 PTY 输出中的 ANSI 转义序列（颜色、光标等），避免显示为乱码。
+/// 去掉 PTY 输出中的 ANSI 转义序列
 String _stripAnsi(String s) {
   return s
       .replaceAll(RegExp(r'\x1b\[[\x20-\x3f]*[\x40-\x7e]'), '')
@@ -126,7 +35,8 @@ String _stripAnsi(String s) {
 
 String _expandPath(String path) {
   if (path.startsWith('~')) {
-    final home = Platform.environment['HOME'] ??
+    final home =
+        Platform.environment['HOME'] ??
         Platform.environment['USERPROFILE'] ??
         '';
     if (path == '~') return home;
@@ -136,76 +46,9 @@ String _expandPath(String path) {
   return path;
 }
 
-/// 会话状态（连接、队列、输出）
-class SessionState {
-  SessionState({
-    this.status = ConnectionStatus.disconnected,
-    this.commands = const [],
-    this.output = const [],
-    this.error,
-  });
-
-  final ConnectionStatus status;
-  final List<CommandItem> commands;
-  final List<String> output;
-  final String? error;
-
-  SessionState copyWith({
-    ConnectionStatus? status,
-    List<CommandItem>? commands,
-    List<String>? output,
-    String? error,
-  }) {
-    return SessionState(
-      status: status ?? this.status,
-      commands: commands ?? this.commands,
-      output: output ?? this.output,
-      error: error,
-    );
-  }
-}
-
-/// 单条会话：配置、状态、Terminal、SSH 资源。
-class SessionEntry {
-  SessionEntry({
-    required this.config,
-    required this.state,
-    this.terminal,
-    this.client,
-    this.socket,
-    this.shellSession,
-    this.outputSub,
-    this.stderrSub,
-    this.running = false,
-    this.usePty = false,
-    this.shouldReconnect = true,
-    this.hasConnected = false,
-    this.reconnectAttempts = 0,
-    this.reconnectTimer,
-  });
-
-  final ConnectionConfig config;
-  SessionState state;
-  final Terminal? terminal;
-  SSHClient? client;
-  SSHSocket? socket;
-  SSHSession? shellSession;
-  StreamSubscription? outputSub;
-  StreamSubscription? stderrSub;
-  bool running;
-  bool usePty;
-  bool shouldReconnect;
-  bool hasConnected;
-  int reconnectAttempts;
-  Timer? reconnectTimer;
-}
-
-/// 多会话状态：当前选中的 Tab id + 所有会话。
+/// 多会话状态：当前选中的 Tab id + 所有会话
 class SessionsState {
-  const SessionsState({
-    this.currentSessionId,
-    this.sessions = const {},
-  });
+  const SessionsState({this.currentSessionId, this.sessions = const {}});
 
   final String? currentSessionId;
   final Map<String, SessionEntry> sessions;
@@ -228,16 +71,17 @@ class SessionsNotifier extends Notifier<SessionsState> {
   @override
   SessionsState build() => const SessionsState();
 
-  /// 添加或切换到指定会话：已存在且已连接则只切换 current；已存在且连接中则只切换 current；已存在但断开则重连；不存在则新建并连接。
-  Future<void> addOrSwitchToTab(String sessionKey, ConnectionConfig config) async {
+  /// 添加或切换到指定会话
+  Future<void> addOrSwitchToTab(
+    String sessionKey,
+    ConnectionConfig config,
+  ) async {
     final sessions = Map<String, SessionEntry>.from(state.sessions);
     final existing = sessions[sessionKey];
 
-    if (existing != null && existing.state.status == ConnectionStatus.connected) {
-      state = state.copyWith(currentSessionId: sessionKey);
-      return;
-    }
-    if (existing != null && existing.state.status == ConnectionStatus.connecting) {
+    if (existing != null &&
+        (existing.state.status == ConnectionStatus.connected ||
+            existing.state.status == ConnectionStatus.connecting)) {
       state = state.copyWith(currentSessionId: sessionKey);
       return;
     }
@@ -258,6 +102,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
       config: config,
       state: SessionState(status: ConnectionStatus.connecting),
       terminal: terminal,
+      cancelToken: SessionCancelToken(),
     );
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
@@ -270,7 +115,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
     }
   }
 
-  void closeTab(String sessionKey) async {
+  Future<void> closeTab(String sessionKey) async {
     await disconnect(sessionKey);
     final sessions = Map<String, SessionEntry>.from(state.sessions);
     sessions.remove(sessionKey);
@@ -293,10 +138,13 @@ class SessionsNotifier extends Notifier<SessionsState> {
     String sessionKey,
     ConnectionConfig config,
     SessionEntry entry,
-    Map<String, SessionEntry> sessions,
-    {bool isReconnect = false}
-  ) async {
+    Map<String, SessionEntry> sessions, {
+    bool isReconnect = false,
+  }) async {
+    final cancelToken = entry.cancelToken;
     await _cleanupConnection(entry);
+    if (cancelToken?.isCancelled == true) return;
+
     entry.state = entry.state.copyWith(
       status: isReconnect
           ? ConnectionStatus.reconnecting
@@ -308,13 +156,17 @@ class SessionsNotifier extends Notifier<SessionsState> {
     try {
       entry.socket = await SSHSocket.connect(config.host, config.port);
 
+      if (cancelToken?.isCancelled == true) {
+        await _cleanupConnection(entry);
+        return;
+      }
+
       List<SSHKeyPair>? identities;
       if (config.privateKeyPath != null &&
           config.privateKeyPath!.trim().isNotEmpty) {
         final path = _expandPath(config.privateKeyPath!.trim());
         final pem = await File(path).readAsString();
-        final passphrase = config.privateKeyPassphrase != null &&
-                config.privateKeyPassphrase!.isNotEmpty
+        final passphrase = config.privateKeyPassphrase?.isNotEmpty == true
             ? config.privateKeyPassphrase
             : null;
         identities = SSHKeyPair.fromPem(pem, passphrase);
@@ -324,77 +176,34 @@ class SessionsNotifier extends Notifier<SessionsState> {
         entry.socket!,
         username: config.username,
         identities: identities,
-        onPasswordRequest: identities == null &&
+        onPasswordRequest:
+            identities == null &&
                 config.password != null &&
                 config.password!.isNotEmpty
             ? () => config.password!
             : null,
       );
       await entry.client!.authenticated;
-      entry.client!.done.then((_) {
-        _handleRemoteDisconnect(sessionKey, null);
-      }).catchError((error) {
-        _handleRemoteDisconnect(sessionKey, error.toString());
-      });
+
+      if (cancelToken?.isCancelled == true) {
+        await _cleanupConnection(entry);
+        return;
+      }
+
+      entry.client!.done
+          .then((_) {
+            _handleRemoteDisconnect(sessionKey, null);
+          })
+          .catchError((error) {
+            _handleRemoteDisconnect(sessionKey, error.toString());
+          });
 
       entry.usePty = config.usePty;
       if (entry.usePty) {
-        const envUtf8 = {'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8'};
-        final ptyConfig = entry.terminal != null
-            ? SSHPtyConfig(
-                width: entry.terminal!.viewWidth,
-                height: entry.terminal!.viewHeight,
-              )
-            : const SSHPtyConfig();
-        try {
-          entry.shellSession = await entry.client!.shell(
-            environment: envUtf8,
-            pty: ptyConfig,
-          );
-        } on SSHChannelRequestError {
-          try {
-            entry.shellSession = await entry.client!.shell(pty: ptyConfig);
-          } on SSHChannelRequestError {
-            try {
-              entry.shellSession = await entry.client!.shell(pty: null);
-            } on SSHChannelRequestError {
-              entry.shellSession = null;
-              entry.usePty = false;
-            }
-          }
-        }
-        if (entry.shellSession != null && entry.terminal != null) {
-          final term = entry.terminal!;
-          term.onOutput = (data) {
-            if (entry.shellSession != null && entry.running) {
-              entry.shellSession!.write(utf8.encode(data));
-            }
-          };
-          term.onResize = (width, height, pixelWidth, pixelHeight) {
-            if (entry.shellSession != null && entry.running) {
-              entry.shellSession!.resizeTerminal(
-                width,
-                height,
-                pixelWidth,
-                pixelHeight,
-              );
-            }
-          };
-          entry.outputSub = entry.shellSession!.stdout.listen((bytes) {
-            term.write(utf8.decode(bytes, allowMalformed: true));
-          });
-          entry.stderrSub = entry.shellSession!.stderr.listen((bytes) {
-            term.write(utf8.decode(bytes, allowMalformed: true));
-          });
-        } else if (entry.shellSession != null) {
-          entry.outputSub = entry.shellSession!.stdout.listen((bytes) {
-            final decoded = utf8.decode(bytes, allowMalformed: true);
-            _appendPtyOutput(sessionKey, _stripAnsi(decoded));
-          });
-          entry.stderrSub = entry.shellSession!.stderr.listen((bytes) {
-            final decoded = utf8.decode(bytes, allowMalformed: true);
-            _appendPtyOutput(sessionKey, _stripAnsi(decoded));
-          });
+        await _setupPtySession(sessionKey, entry, sessions, cancelToken);
+        if (cancelToken?.isCancelled == true) {
+          await _cleanupConnection(entry);
+          return;
         }
       }
 
@@ -408,8 +217,9 @@ class SessionsNotifier extends Notifier<SessionsState> {
       );
       sessions[sessionKey] = entry;
       state = state.copyWith(sessions: Map.from(sessions));
-      _processQueue(sessionKey);
+      _processQueueLoop(sessionKey);
     } catch (e) {
+      if (cancelToken?.isCancelled == true) return;
       entry.running = false;
       entry.state = entry.state.copyWith(
         status: ConnectionStatus.error,
@@ -420,6 +230,83 @@ class SessionsNotifier extends Notifier<SessionsState> {
       if (entry.shouldReconnect && entry.hasConnected) {
         _scheduleReconnect(sessionKey, entry, sessions);
       }
+    }
+  }
+
+  Future<void> _setupPtySession(
+    String sessionKey,
+    SessionEntry entry,
+    Map<String, SessionEntry> sessions,
+    SessionCancelToken? cancelToken,
+  ) async {
+    const envUtf8 = {'LANG': 'en_US.UTF-8', 'LC_ALL': 'en_US.UTF-8'};
+    final ptyConfig = entry.terminal != null
+        ? SSHPtyConfig(
+            width: entry.terminal!.viewWidth,
+            height: entry.terminal!.viewHeight,
+          )
+        : const SSHPtyConfig();
+
+    try {
+      entry.shellSession = await entry.client!.shell(
+        environment: envUtf8,
+        pty: ptyConfig,
+      );
+    } on SSHChannelRequestError {
+      try {
+        entry.shellSession = await entry.client!.shell(pty: ptyConfig);
+      } on SSHChannelRequestError {
+        try {
+          entry.shellSession = await entry.client!.shell(pty: null);
+        } on SSHChannelRequestError {
+          entry.shellSession = null;
+          entry.usePty = false;
+        }
+      }
+    }
+
+    if (cancelToken?.isCancelled == true) return;
+
+    if (entry.shellSession != null && entry.terminal != null) {
+      final term = entry.terminal!;
+      term.onOutput = (data) {
+        if (entry.shellSession != null && entry.running) {
+          entry.shellSession!.write(utf8.encode(data));
+        }
+      };
+      term.onResize = (width, height, pixelWidth, pixelHeight) {
+        if (entry.shellSession != null && entry.running) {
+          entry.shellSession!.resizeTerminal(
+            width,
+            height,
+            pixelWidth,
+            pixelHeight,
+          );
+        }
+      };
+      entry.outputSub = entry.shellSession!.stdout.listen(
+        (bytes) => term.write(utf8.decode(bytes, allowMalformed: true)),
+        onError: (e) => _appendPtyOutput(sessionKey, 'Stream error: $e'),
+      );
+      entry.stderrSub = entry.shellSession!.stderr.listen(
+        (bytes) => term.write(utf8.decode(bytes, allowMalformed: true)),
+        onError: (e) => _appendPtyOutput(sessionKey, 'Stream error: $e'),
+      );
+    } else if (entry.shellSession != null) {
+      entry.outputSub = entry.shellSession!.stdout.listen(
+        (bytes) => _appendPtyOutput(
+          sessionKey,
+          _stripAnsi(utf8.decode(bytes, allowMalformed: true)),
+        ),
+        onError: (e) => _appendPtyOutput(sessionKey, 'Stream error: $e'),
+      );
+      entry.stderrSub = entry.shellSession!.stderr.listen(
+        (bytes) => _appendPtyOutput(
+          sessionKey,
+          _stripAnsi(utf8.decode(bytes, allowMalformed: true)),
+        ),
+        onError: (e) => _appendPtyOutput(sessionKey, 'Stream error: $e'),
+      );
     }
   }
 
@@ -503,9 +390,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final sessions = Map<String, SessionEntry>.from(state.sessions);
     final entry = sessions[sessionKey];
     if (entry == null || !entry.running) return;
-    entry.state = entry.state.copyWith(
-      output: [...entry.state.output, s],
-    );
+    entry.state = entry.state.copyWith(output: [...entry.state.output, s]);
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
   }
@@ -525,40 +410,67 @@ class SessionsNotifier extends Notifier<SessionsState> {
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
     if (entry.running && entry.client != null) {
-      _processQueue(sessionKey);
+      _processQueueLoop(sessionKey);
     }
   }
 
-  Future<void> _processQueue(String sessionKey) async {
-    final sessions = Map<String, SessionEntry>.from(state.sessions);
-    final entry = sessions[sessionKey];
-    if (entry == null || entry.client == null || !entry.running) return;
+  /// 使用循环处理命令队列，避免递归栈溢出
+  void _processQueueLoop(String sessionKey) {
+    Future(() async {
+      while (true) {
+        final sessions = Map<String, SessionEntry>.from(state.sessions);
+        final entry = sessions[sessionKey];
+        if (entry == null || entry.client == null || !entry.running) return;
 
-    final current = entry.state;
-    final pending = current.commands
-        .where((c) => c.status == CommandStatus.pending)
-        .toList();
-    if (pending.isEmpty) return;
+        final current = entry.state;
+        final pending = current.commands
+            .where((c) => c.status == CommandStatus.pending)
+            .toList();
+        if (pending.isEmpty) return;
 
-    final item = pending.first;
-    entry.state = current.copyWith(
-      commands: current.commands.map((c) {
+        final item = pending.first;
+        final shouldContinue = await _processCommand(
+          sessionKey,
+          entry,
+          sessions,
+          item,
+        );
+        if (!shouldContinue) return;
+
+        await Future.delayed(Duration.zero);
+      }
+    });
+  }
+
+  /// 处理单条命令，返回是否应继续处理
+  Future<bool> _processCommand(
+    String sessionKey,
+    SessionEntry entry,
+    Map<String, SessionEntry> sessions,
+    CommandItem item,
+  ) async {
+    var sessionsRef = Map<String, SessionEntry>.from(state.sessions);
+    var entryRef = sessionsRef[sessionKey];
+    if (entryRef == null) return false;
+
+    entryRef.state = entryRef.state.copyWith(
+      commands: entryRef.state.commands.map((c) {
         if (c.id == item.id) {
           return c.copyWith(status: CommandStatus.sending);
         }
         return c;
       }).toList(),
     );
-    sessions[sessionKey] = entry;
-    state = state.copyWith(sessions: sessions);
+    sessionsRef[sessionKey] = entryRef;
+    state = state.copyWith(sessions: sessionsRef);
 
-    if (entry.usePty && entry.shellSession != null) {
-      final newOutput = entry.terminal == null
-          ? [...entry.state.output, '\$ ${item.text}']
-          : entry.state.output;
-      entry.shellSession!.write(utf8.encode('${item.text}\n'));
-      entry.state = entry.state.copyWith(
-        commands: entry.state.commands.map((c) {
+    if (entryRef.usePty && entryRef.shellSession != null) {
+      final newOutput = entryRef.terminal == null
+          ? [...entryRef.state.output, '\$ ${item.text}']
+          : entryRef.state.output;
+      entryRef.shellSession!.write(utf8.encode('${item.text}\n'));
+      entryRef.state = entryRef.state.copyWith(
+        commands: entryRef.state.commands.map((c) {
           if (c.id == item.id) {
             return c.copyWith(status: CommandStatus.completed);
           }
@@ -566,47 +478,37 @@ class SessionsNotifier extends Notifier<SessionsState> {
         }).toList(),
         output: newOutput,
       );
-      sessions[sessionKey] = entry;
-      state = state.copyWith(sessions: sessions);
-      final remaining = entry.state.commands
-          .where((c) => c.status == CommandStatus.pending)
-          .toList();
-      if (remaining.isNotEmpty) {
-        _processQueue(sessionKey);
-      }
-      return;
+      sessionsRef[sessionKey] = entryRef;
+      state = state.copyWith(sessions: sessionsRef);
+      return true;
     }
 
     try {
-      final result = await entry.client!.run(item.text);
+      final result = await entryRef.client!.run(item.text);
       final output = utf8.decode(result);
-      entry.state = entry.state.copyWith(
-        commands: entry.state.commands.map((c) {
+      sessionsRef = Map<String, SessionEntry>.from(state.sessions);
+      entryRef = sessionsRef[sessionKey];
+      if (entryRef == null) return false;
+
+      entryRef.state = entryRef.state.copyWith(
+        commands: entryRef.state.commands.map((c) {
           if (c.id == item.id) {
-            return c.copyWith(
-              status: CommandStatus.completed,
-              output: output,
-            );
+            return c.copyWith(status: CommandStatus.completed, output: output);
           }
           return c;
         }).toList(),
-        output: [
-          ...entry.state.output,
-          '\$ ${item.text}',
-          output,
-        ],
+        output: [...entryRef.state.output, '\$ ${item.text}', output],
       );
-      sessions[sessionKey] = entry;
-      state = state.copyWith(sessions: sessions);
-      final remaining = entry.state.commands
-          .where((c) => c.status == CommandStatus.pending)
-          .toList();
-      if (remaining.isNotEmpty) {
-        _processQueue(sessionKey);
-      }
+      sessionsRef[sessionKey] = entryRef;
+      state = state.copyWith(sessions: sessionsRef);
+      return true;
     } catch (e) {
-      entry.state = entry.state.copyWith(
-        commands: entry.state.commands.map((c) {
+      sessionsRef = Map<String, SessionEntry>.from(state.sessions);
+      entryRef = sessionsRef[sessionKey];
+      if (entryRef == null) return false;
+
+      entryRef.state = entryRef.state.copyWith(
+        commands: entryRef.state.commands.map((c) {
           if (c.id == item.id) {
             return c.copyWith(
               status: CommandStatus.failed,
@@ -615,10 +517,11 @@ class SessionsNotifier extends Notifier<SessionsState> {
           }
           return c;
         }).toList(),
-        output: [...entry.state.output, '\$ ${item.text}', 'Error: $e'],
+        output: [...entryRef.state.output, '\$ ${item.text}', 'Error: $e'],
       );
-      sessions[sessionKey] = entry;
-      state = state.copyWith(sessions: sessions);
+      sessionsRef[sessionKey] = entryRef;
+      state = state.copyWith(sessions: sessionsRef);
+      return false;
     }
   }
 
@@ -627,6 +530,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final entry = sessions[sessionKey];
     if (entry == null) return;
 
+    entry.cancelToken?.cancel();
     entry.shouldReconnect = false;
     entry.reconnectTimer?.cancel();
     entry.reconnectTimer = null;
@@ -643,6 +547,7 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final sessions = Map<String, SessionEntry>.from(state.sessions);
     final entry = sessions[sessionKey];
     if (entry == null) return;
+    entry.cancelToken?.reset();
     entry.shouldReconnect = true;
     entry.reconnectAttempts = 0;
     entry.reconnectTimer?.cancel();
@@ -672,23 +577,23 @@ class SessionsNotifier extends Notifier<SessionsState> {
   }
 }
 
-final sessionsProvider =
-    NotifierProvider<SessionsNotifier, SessionsState>(SessionsNotifier.new);
+final sessionsProvider = NotifierProvider<SessionsNotifier, SessionsState>(
+  SessionsNotifier.new,
+);
 
-/// 当前会话的 SessionState，供 UI 使用。
+/// 当前会话的 SessionState
 final currentSessionStateProvider = Provider<SessionState?>((ref) {
   final state = ref.watch(sessionsProvider);
-  final entry = state.currentEntry;
-  return entry?.state;
+  return state.currentEntry?.state;
 });
 
-/// 当前会话的 Terminal（PTY 时），供 UI 使用。
+/// 当前会话的 Terminal（PTY 时）
 final currentTerminalProvider = Provider<Terminal?>((ref) {
   final state = ref.watch(sessionsProvider);
   return state.currentEntry?.terminal;
 });
 
-/// 当前会话的 ConnectionConfig。
+/// 当前会话的 ConnectionConfig
 final currentSessionConfigProvider = Provider<ConnectionConfig?>((ref) {
   final state = ref.watch(sessionsProvider);
   return state.currentEntry?.config;
