@@ -481,7 +481,7 @@ class _OutputArea extends StatelessWidget {
   }
 }
 
-class _CommandInput extends StatelessWidget {
+class _CommandInput extends StatefulWidget {
   const _CommandInput({
     required this.controller,
     required this.focusNode,
@@ -505,6 +505,19 @@ class _CommandInput extends StatelessWidget {
   final void Function(String value) onSuggestionTap;
 
   @override
+  State<_CommandInput> createState() => _CommandInputState();
+}
+
+class _CommandInputState extends State<_CommandInput> {
+  final _keyboardFocusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _keyboardFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -515,7 +528,7 @@ class _CommandInput extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (suggestions.isNotEmpty)
+          if (widget.suggestions.isNotEmpty)
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 160),
               child: Container(
@@ -526,12 +539,12 @@ class _CommandInput extends StatelessWidget {
                 ),
                 child: ListView.builder(
                   shrinkWrap: true,
-                  itemCount: suggestions.length,
+                  itemCount: widget.suggestions.length,
                   itemBuilder: (context, i) {
-                    final item = suggestions[i];
-                    final selected = i == selectedIndex;
+                    final item = widget.suggestions[i];
+                    final selected = i == widget.selectedIndex;
                     return InkWell(
-                      onTap: () => onSuggestionTap(item),
+                      onTap: () => widget.onSuggestionTap(item),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -559,18 +572,18 @@ class _CommandInput extends StatelessWidget {
                 '\$ ',
                 style: TextStyle(
                   fontFamily: 'monospace',
-                  color: enabled ? Colors.green : Colors.grey,
+                  color: widget.enabled ? Colors.green : Colors.grey,
                   fontSize: 16,
                 ),
               ),
               Expanded(
                 child: RawKeyboardListener(
-                  focusNode: focusNode,
-                  onKey: onKey,
+                  focusNode: _keyboardFocusNode,
+                  onKey: widget.onKey,
                   child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    enabled: enabled,
+                    controller: widget.controller,
+                    focusNode: widget.focusNode,
+                    enabled: widget.enabled,
                     decoration: const InputDecoration(
                       hintText: '输入命令，Enter 提交',
                       border: InputBorder.none,
@@ -581,15 +594,17 @@ class _CommandInput extends StatelessWidget {
                       fontFamily: 'monospace',
                       fontSize: 14,
                     ),
-                    onChanged: onChanged,
-                    onSubmitted: enabled && onSubmit != null
-                        ? (_) => onSubmit!()
+                    onChanged: widget.onChanged,
+                    onSubmitted: widget.enabled && widget.onSubmit != null
+                        ? (_) => widget.onSubmit!()
                         : null,
                   ),
                 ),
               ),
               FilledButton(
-                onPressed: enabled && onSubmit != null ? onSubmit : null,
+                onPressed: widget.enabled && widget.onSubmit != null
+                    ? widget.onSubmit
+                    : null,
                 child: const Text('执行'),
               ),
             ],
