@@ -7,10 +7,12 @@ import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:xterm/xterm.dart';
 
+import '../models/app_settings.dart';
 import '../models/command_item.dart';
 import '../models/connection_config.dart';
 import '../models/session_entry.dart';
 import '../models/session_state.dart';
+import '../services/storage_service.dart';
 
 export '../models/connection_config.dart';
 export '../models/session_state.dart';
@@ -97,16 +99,51 @@ class SessionsNotifier extends Notifier<SessionsState> {
       return;
     }
 
-    final terminal = config.usePty ? Terminal() : null;
+    final globalUsePty = await _getGlobalUsePty();
+    final terminal = globalUsePty ? Terminal() : null;
     final entry = SessionEntry(
-      config: config,
+      config: config.copyWith(usePty: globalUsePty),
       state: SessionState(status: ConnectionStatus.connecting),
       terminal: terminal,
       cancelToken: SessionCancelToken(),
     );
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
-    await _connectForKey(sessionKey, config, entry, sessions);
+    await _connectForKey(sessionKey, entry.config, entry, sessions);
+  }
+
+  Future<bool> _getGlobalUsePty() async {
+    final raw = await StorageService.getConfig(AppSettings.storageUsePty);
+    return raw == 'true';
+  }
+
+  /// 检查历史命令中是否有 tmux/screen 使用
+  Future<bool> _checkTmuxUsage(ConnectionConfig config) async {
+    try {
+      final historyKey = StorageService.historyKeyFromConfig(config);
+      final history = await StorageService.getCommandHistory(historyKey);
+
+      // 检查历史命令中是否包含 tmux/screen 相关命令
+      final tmuxKeywords = [
+        'tmux',
+        'tmux new',
+        'tmux attach',
+        'tmux a',
+        'screen',
+        'screen -r',
+      ];
+      for (final cmd in history) {
+        final cmdLower = cmd.toLowerCase();
+        for (final keyword in tmuxKeywords) {
+          if (cmdLower.contains(keyword.toLowerCase())) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
   }
 
   void switchToTab(String sessionKey) {
@@ -211,9 +248,17 @@ class SessionsNotifier extends Notifier<SessionsState> {
       entry.shouldReconnect = true;
       entry.hasConnected = true;
       entry.reconnectAttempts = 0;
+
+      // 检测是否需要 tmux attach 建议（仅在重连时）
+      bool mayNeedTmuxAttach = false;
+      if (isReconnect && config.usePty) {
+        mayNeedTmuxAttach = await _checkTmuxUsage(config);
+      }
+
       entry.state = entry.state.copyWith(
         status: ConnectionStatus.connected,
         error: null,
+        mayNeedTmuxAttach: mayNeedTmuxAttach,
       );
       sessions[sessionKey] = entry;
       state = state.copyWith(sessions: Map.from(sessions));
@@ -347,16 +392,24 @@ class SessionsNotifier extends Notifier<SessionsState> {
       state = state.copyWith(sessions: sessions);
       return;
     }
+
+    // 检查是否有已发送但未收到回显的命令
+    final hasSending = entry.state.commands.any(
+      (c) => c.status == CommandStatus.sending,
+    );
+
     final updatedCommands = entry.state.commands.map((c) {
       if (c.status == CommandStatus.sending) {
         return c.copyWith(status: CommandStatus.pending);
       }
       return c;
     }).toList();
+
     entry.state = entry.state.copyWith(
       status: ConnectionStatus.reconnecting,
       commands: updatedCommands,
       error: error,
+      hasUnconfirmedCommands: hasSending,
     );
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
@@ -371,12 +424,18 @@ class SessionsNotifier extends Notifier<SessionsState> {
     entry.reconnectTimer?.cancel();
     entry.reconnectAttempts += 1;
     final delaySeconds = math.min(30, 1 << (entry.reconnectAttempts - 1));
-    entry.reconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+    entry.reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
       final latest = state.sessions[sessionKey];
       if (latest == null || !latest.shouldReconnect) return;
+      final globalUsePty = await _getGlobalUsePty();
+      final updatedConfig = latest.config.copyWith(usePty: globalUsePty);
+      if (globalUsePty && latest.terminal == null) {
+        latest.terminal = Terminal();
+      }
+      latest.config = updatedConfig;
       _connectForKey(
         sessionKey,
-        latest.config,
+        updatedConfig,
         latest,
         Map<String, SessionEntry>.from(state.sessions),
         isReconnect: true,
@@ -391,6 +450,15 @@ class SessionsNotifier extends Notifier<SessionsState> {
     final entry = sessions[sessionKey];
     if (entry == null || !entry.running) return;
     entry.state = entry.state.copyWith(output: [...entry.state.output, s]);
+    sessions[sessionKey] = entry;
+    state = state.copyWith(sessions: sessions);
+  }
+
+  void updateSessionState(String sessionKey, SessionState newState) {
+    final sessions = Map<String, SessionEntry>.from(state.sessions);
+    final entry = sessions[sessionKey];
+    if (entry == null) return;
+    entry.state = newState;
     sessions[sessionKey] = entry;
     state = state.copyWith(sessions: sessions);
   }

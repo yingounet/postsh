@@ -154,6 +154,46 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
     });
   }
 
+  void _showTmuxAttachDialog(String sessionKey) {
+    final entry = ref.read(sessionsProvider).sessions[sessionKey];
+    if (entry == null || !mounted) return;
+
+    // 标记已建议过
+    ref
+        .read(sessionsProvider.notifier)
+        .updateSessionState(
+          sessionKey,
+          entry.state.copyWith(tmuxAttachSuggested: true),
+        );
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('恢复会话'),
+        content: const Text('检测到可能使用 tmux/screen 会话，是否尝试恢复？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('跳过'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx, true);
+              // 执行 tmux attach -d
+              ref
+                  .read(sessionsProvider.notifier)
+                  .addCommand(
+                    sessionKey,
+                    'tmux attach -d 2>/dev/null || tmux new',
+                  );
+            },
+            child: const Text('恢复'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final sessionsState = ref.watch(sessionsProvider);
@@ -167,6 +207,9 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
 
     ref.listen<SessionsState>(sessionsProvider, (prev, next) {
       final entry = next.currentEntry;
+      final prevEntry = prev?.currentEntry;
+
+      // 更新最后使用时间
       if (entry != null &&
           entry.state.status == ConnectionStatus.connected &&
           next.currentSessionId != null &&
@@ -177,6 +220,27 @@ class _TerminalScreenState extends ConsumerState<TerminalScreen> {
           StorageService.updateLastUsed(id, DateTime.now());
           ref.invalidate(connectionsListProvider);
         }
+      }
+
+      // 检查是否需要显示 tmux attach 建议
+      if (entry != null &&
+          entry.state.mayNeedTmuxAttach &&
+          !entry.state.tmuxAttachSuggested &&
+          next.currentSessionId != null) {
+        _showTmuxAttachDialog(next.currentSessionId!);
+      }
+
+      // 检查是否有未确认命令需要提示（重连成功后）
+      if (entry != null &&
+          prevEntry != null &&
+          prevEntry.state.status == ConnectionStatus.reconnecting &&
+          entry.state.status == ConnectionStatus.connected &&
+          prevEntry.state.hasUnconfirmedCommands &&
+          next.currentSessionId != null) {
+        _showUnconfirmedCommandsDialog(
+          next.currentSessionId!,
+          prevEntry.state.commands,
+        );
       }
     });
 

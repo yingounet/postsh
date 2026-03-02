@@ -26,9 +26,9 @@ class SessionEntry {
     this.reconnectTimer,
   });
 
-  final ConnectionConfig config;
+  ConnectionConfig config;
   SessionState state;
-  final Terminal? terminal;
+  Terminal? terminal;
   final SessionCancelToken? cancelToken;
   SSHClient? client;
   SSHSocket? socket;
